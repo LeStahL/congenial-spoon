@@ -1,3 +1,8 @@
+*.kate-swp
+*.kate_swp
+build
+*.kdev4
+
 # Prerequisites
 *.d
 
