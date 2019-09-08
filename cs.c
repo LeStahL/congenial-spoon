@@ -590,11 +590,13 @@ void draw()
     {
         glClearColor(1.,0.,0.,1.);
         glClear(GL_COLOR_BUFFER_BIT);
+        printf("Compiler error: \n\n%s\n", compile_logs[index]);
     }
     else if(!program_linked[index])
     {
         glClearColor(1.,1.,0.,1.);
         glClear(GL_COLOR_BUFFER_BIT);
+        printf("Linker error: \n\n%s\n", link_logs[index]);
     }
     
     if(shot)
@@ -885,8 +887,37 @@ int WINAPI demo(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     
     select_button(0);
 
-    // Load JSON config file with projection area definitions
+    printf("\n");
     
+    // Load JSON config file with projection area definitions
+    FILE *f = fopen("congenial-spoon.json", "rt");
+    int filesize;
+    if(f == 0) printf("Failed to open config file: congenial-spoon.json\n");
+    else
+    {
+        fseek(f, 0, SEEK_END);
+        filesize = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        char *data = (char*)malloc(filesize+2);
+        fread(data, 1, filesize, f);
+        fclose(f);
+
+        cJSON *json = cJSON_Parse(data);
+        if(json == 0)
+        {
+            char *c = cJSON_GetErrorPtr(json);
+            int nlines = 0;
+            for(char * c0 = data; c0 != c; ++c0)
+            {
+                if(*c0 == '\n') ++ nlines;
+            }
+            printf("Parse error in line %d.\n", nlines);
+        }
+     
+        char *source = cJSON_Print(json);
+        printf("%s\n",source);
+        cJSON_Delete(json);
+    }
     __int64 current_time, cps;
     QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
     QueryPerformanceFrequency((LARGE_INTEGER*)&cps);
