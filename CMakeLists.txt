@@ -26,9 +26,10 @@ if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /ENTRY:demo /SUBSYSTEM:Windows  /OPT:REF  /OPT:ICF=10 /VERBOSE /NODEFAULTLIB ")
 endif()
 
-add_executable(congenial-spoon cs.c )
+add_executable(congenial-spoon cs.c "${PROJECT_SOURCE_DIR}/thirdparty/cJSON/cJSON.c")
 
 target_include_directories(congenial-spoon SYSTEM PRIVATE "${OPENGL_INCLUDE_DIR}")
+target_include_directories(congenial-spoon SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/thirdparty/cJSON/")
 
 target_link_libraries(congenial-spoon OpenGL::GL)
 

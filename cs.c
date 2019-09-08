@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cJSON.h"
+
 const char *demoname = "congenial-spoon";
 int w = 1280, h = 720;
 // Supported resolutions
@@ -882,13 +884,15 @@ int WINAPI demo(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     }
     
     select_button(0);
+
+    // Load JSON config file with projection area definitions
     
-    // Main loop
     __int64 current_time, cps;
     QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
     QueryPerformanceFrequency((LARGE_INTEGER*)&cps);
     t_start = (double)current_time/(double)cps;
 	
+    // Main loop
 	while(flip_buffers())
 	{
         QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
