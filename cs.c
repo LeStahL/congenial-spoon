@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <math.h>
 
 #include "cJSON.h"
 
@@ -158,10 +160,52 @@ PFNGLDETACHSHADERPROC glDetachShader;
 PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D;
 PFNGLACTIVETEXTUREPROC glActiveTexture;
 
-float mix(float a, float b, float t)
+double mix(double a, double b, double t)
 {
     return (1.-t)*a+t*b;
 }
+
+double clamp(double t, double tlo, double thi)
+{
+    return max(min(t, thi),tlo);
+}
+
+double smoothstep(double edge0, double edge1, double x)
+{
+    double t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+double fract(double t)
+{
+    return t-floor(t);
+}
+
+double hash(double s)
+{
+    srand(1.e5*s);
+    double t = (double)rand()/(double)RAND_MAX;
+    return t;
+}
+
+double lfnoise(double t)
+{
+    double i = floor(t),
+        t01 = fract(t);
+    t01 = smoothstep(0., 1., t01);
+    double low = hash(i),
+        high = hash(i+1.);
+//     printf("lo: %le, hi = %le\n", low, high);
+    t01 = mix(low, high, t01);
+    return t01;
+}
+
+DWORD dwWaitStatus, watch_directory_thread_id; 
+HANDLE dwChangeHandles[2],
+    watch_directory_thread; 
+TCHAR lpDrive[4];
+TCHAR lpFile[_MAX_FNAME];
+TCHAR lpExt[_MAX_EXT];
 
 #define ACREA(id, type) \
     if(id == 0) { id = (type*)malloc(nfiles*sizeof(type));}\
@@ -169,20 +213,25 @@ float mix(float a, float b, float t)
 #define ACREAL(id, type, len) \
     if(id == 0) { id = (type*)malloc(len*sizeof(type));}\
     else {id = (type*)realloc(id, len*sizeof(type));}
-
+    
 int debug(int shader_handle, int i)
 {
+//     printf("    Debugging shader with handle %d.\n", shader_handle);
     int compile_status = 0;
     glGetShaderiv(shader_handle, GL_COMPILE_STATUS, &compile_status);
     if(compile_status != GL_TRUE)
     {
+//         printf("    FAILED.\n");
         GLint len;
         glGetShaderiv(shader_handle, GL_INFO_LOG_LENGTH, &len);
+//         printf("    Log length: %d\n", len);
         ACREAL(compile_logs[i], GLchar, len);
         glGetShaderInfoLog(shader_handle, len, NULL, compile_logs[i]);
+//         printf("    Error messages:\n%s\n", compile_logs[i]);
         return 0;
     }
     else
+//         printf("    Shader compilation successful.\n");
         return 1;
 }
 
@@ -638,6 +687,37 @@ void draw()
     
     double t = t_now-t_start;
     
+//     printf("post fader values: ");
+    double r = hash(floor(2.*t));
+    int change_index = 8.*r;
+    printf("change index: %d, r:%le\n", change_index,r);
+    change_index = (change_index == 0)?1:change_index;
+    
+    post_fader_values[change_index % 8] = lfnoise(2222.*index +50.*t);
+    if(post_fader_values[3] > 8.) post_fader_values[3] = 0.;
+    
+    r = hash(1.1*floor(2.*t)+1.2321e4);
+    change_index = 8.*r;
+    post_fader_values[change_index % 8] = 0.;
+//     for(int i=0; i<8; ++i)
+//     {
+//         if(i!=5)
+//         {
+//             double n = lfnoise(2222.*i+50.*t);
+//             post_fader_values[i] = n;
+//         }
+//         else post_fader_values[i] = 0.;
+//         if(i==3)
+//         {
+//             double n = lfnoise(2222.*i+5.*t);
+//             if(n > 5./127.) n = 0.;
+//             printf("%le\n", n);
+//             post_fader_values[i] = n;
+//         }
+// //         printf("%le\n", t);
+//     }
+//     printf("\n");
+    
     for(int i=0; i<double_buffered+1; ++i)
     {
         cutoff = (int)mix(96.,256.,dial_3_value);
@@ -718,7 +798,10 @@ void draw()
     glUniform1i(post_iChannel0_location, 0);
     glUniform1f(post_time_location, t);
     for(int l=0; l<8; ++l)
-        glUniform1f(post_fader_locations[l], fader_values[l]);
+    {
+        if(l != 5)
+            glUniform1f(post_fader_locations[l], post_fader_values[l]);
+    }
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, first_pass_texture);
     
@@ -1271,6 +1354,7 @@ const char * post_source =
 "    {\n"
 "        col.rgb = mix(col.rgb, length(col.rgb)/sqrt(3.)*c.xxx, iFader6);\n"
 "    }\n"
+"    col *= col;\n"
 "    \n"
 "    fragColor = col;\n"
 "}\n"
