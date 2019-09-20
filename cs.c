@@ -31,6 +31,8 @@
 
 #include "cJSON.h"
 
+#include "fftw3.h"
+
 const char *demoname = "congenial-spoon";
 int w = 1280, h = 720;
 // Supported resolutions
@@ -109,6 +111,12 @@ HANDLE dwChangeHandles[2],
 TCHAR lpDrive[4];
 TCHAR lpFile[_MAX_FNAME];
 TCHAR lpExt[_MAX_EXT];
+fftw_complex *in, *out;
+fftw_plan p;
+#define NFFT 512
+float values[NFFT], power_spectrum[NFFT];
+WAVEHDR headers[2];
+HWAVEIN wi;
 
 PFNGLCREATESHADERPROC glCreateShader;
 PFNGLCREATEPROGRAMPROC glCreateProgram;

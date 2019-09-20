@@ -22,6 +22,8 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 # Find the right python interpreter version
 find_package(OpenGL REQUIRED COMPONENTS OpenGL)
 
+add_subdirectory("${PROJECT_SOURCE_DIR}/thirdparty/fftw-3.3.8/")
+
 if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /ENTRY:demo /SUBSYSTEM:Windows  /OPT:REF  /OPT:ICF=10 /VERBOSE /NODEFAULTLIB ")
 endif()
@@ -30,8 +32,11 @@ add_executable(congenial-spoon cs.c "${PROJECT_SOURCE_DIR}/thirdparty/cJSON/cJSO
 
 target_include_directories(congenial-spoon SYSTEM PRIVATE "${OPENGL_INCLUDE_DIR}")
 target_include_directories(congenial-spoon SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/thirdparty/cJSON/")
+target_include_directories(congenial-spoon SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/thirdparty/fftw-3.3.8/api")
 
-target_link_libraries(congenial-spoon OpenGL::GL)
+target_link_directories(congenial-spoon PRIVATE "${PROJECT_BINARY_DIR}/thirdparty/fftw-3.3.8/Release")
+
+target_link_libraries(congenial-spoon OpenGL::GL fftw3)
 
 if(MSVC)
     target_compile_options(congenial-spoon PRIVATE /Gy /O1 /fp:fast /GR- /GS- /MT )
