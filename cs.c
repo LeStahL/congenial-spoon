@@ -94,17 +94,29 @@ nfiles,
 *fader6_locations = 0,
 *fader7_locations = 0,
 *fader8_locations = 0,
+*scale_locations = 0,
 *shader_compiled = 0,
 *program_linked = 0,
 index = 0,
 dirty = 0,
-shot = 0;
+shot = 0,
+buffer_size = 64,
+double_buffered = 0,
+cutoff = 96;
 char **shader_sources = 0;
 GLchar **compile_logs = 0,
 **link_logs = 0;
 double t_start = 0.,
 t_now = 0.,
-fader_values[] = { 1.,0.,0.,0.,0.,0.,0.,0.,0.};
+fader_values[] = { 1.,0.,0.,0.,0.,0.,0.,0.,0.},
+scale = 0.,
+sscale = 0.,
+ssscale = 0.,
+highscale = 0.,
+nbeats = 0.,
+dial_1_value = 0.,
+dial_2_value = 0.,
+dial_3_value = 0.;
 DWORD dwWaitStatus, watch_directory_thread_id; 
 HANDLE dwChangeHandles[2],
     watch_directory_thread; 
@@ -139,6 +151,11 @@ PFNGLDELETESHADERPROC glDeleteShader;
 PFNGLDELETEPROGRAMPROC glDeleteProgram;
 PFNGLDETACHSHADERPROC glDetachShader;
 
+float mix(float a, float b, float t)
+{
+    return (1.-t)*a+t*b;
+}
+
 #define ACREA(id, type) \
     if(id == 0) { id = (type*)malloc(nfiles*sizeof(type));}\
     else {id = (type*)realloc(id, nfiles*sizeof(type));}
@@ -146,7 +163,7 @@ PFNGLDETACHSHADERPROC glDetachShader;
     if(id == 0) { id = (type*)malloc(len*sizeof(type));}\
     else {id = (type*)realloc(id, len*sizeof(type));}
 
-    int debug(int shader_handle, int i)
+int debug(int shader_handle, int i)
 {
     int compile_status = 0;
     glGetShaderiv(shader_handle, GL_COMPILE_STATUS, &compile_status);
@@ -276,6 +293,7 @@ void ReloadShaders()
     ACREA(fader6_locations, int);
     ACREA(fader7_locations, int);
     ACREA(fader8_locations, int);
+    ACREA(scale_locations, int);
     ACREA(shader_sources, char*);
     ACREA(shader_compiled, int);
     ACREA(program_linked, int);
@@ -319,7 +337,7 @@ void ReloadShaders()
         fader6_locations[i] = glGetUniformLocation(programs[i], "iFader6");
         fader7_locations[i] = glGetUniformLocation(programs[i], "iFader7");
         fader8_locations[i] = glGetUniformLocation(programs[i], "iFader8");
-        
+        scale_locations[i] = glGetUniformLocation(programs[i], "iScale");
     }
     
     for(int i=0; i<nfiles; ++i) free(filenames[i]);
@@ -571,6 +589,62 @@ void draw()
 {
     double t = t_now-t_start;
     
+    for(int i=0; i<double_buffered+1; ++i)
+    {
+        cutoff = (int)mix(96.,256.,dial_3_value);
+        if(headers[i].dwFlags & WHDR_DONE)
+        {
+            // Replace last block in values
+            for(int j=0; j<NFFT-buffer_size; ++j)
+                values[j] = values[j+buffer_size];
+            for(int j=0; j<buffer_size; ++j)
+                values[NFFT-buffer_size+j] = ((float)(*(short *)(headers[i].lpData+2*j))/32767.);
+
+            // Fourier transform values
+            for(int j=0; j<NFFT; ++j)
+            {
+                in[j][0] = values[j];
+                in[j][1] = 0.;
+            }
+            fftw_execute(p);
+            
+//             if(!scale_override)
+            {
+                scale = 0.;
+                highscale = 0.;
+                for(int j=0; j<NFFT; ++j)
+                    power_spectrum[j] = out[j][0]*out[j][0]+out[j][1]*out[j][1];
+
+                ssscale = sscale;
+                sscale = scale;
+                scale = 0.;
+                for(int j=0; j<cutoff; ++j)
+                {
+                    scale += power_spectrum[j];
+                }
+                scale *= 2.e-5;
+
+                for(int j=cutoff; j<NFFT; ++j)
+                {
+                    highscale += power_spectrum[j];
+                }
+                
+                if(dial_1_value>0.)scale *= mix(1.,100.,dial_1_value);
+                if(dial_2_value>0.)scale *= mix(1.,.01,dial_2_value);
+                
+                scale = max(scale,0.);
+                scale = min(scale,1.);
+            }
+            
+            headers[i].dwFlags = 0;
+            headers[i].dwBytesRecorded = 0;
+            
+            waveInPrepareHeader(wi, &headers[i], sizeof(headers[i]));
+            waveInAddBuffer(wi, &headers[i], sizeof(headers[i]));
+            
+        }
+    }
+    
     glViewport(0,0,w,h);
     
     glUseProgram(programs[index]);
@@ -585,6 +659,7 @@ void draw()
     glUniform1f(fader6_locations[index], fader_values[6]);
     glUniform1f(fader7_locations[index], fader_values[7]);
     glUniform1f(fader8_locations[index], fader_values[8]);
+    glUniform1f(scale_locations[index], scale);
     
     quad();
     
@@ -614,6 +689,16 @@ void draw()
     }
 }
 
+#define FADER_KEYBOARD(fader_index, key_up, key_down)\
+    case key_up:\
+        fader_values[fader_index] += 1./127.;\
+        fader_values[fader_index] = min(fader_values[fader_index], 1.);\
+        break;\
+    case key_down:\
+        fader_values[fader_index] -= 1./127.;\
+        fader_values[fader_index] = max(fader_values[fader_index], 0.);\
+        break;
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch(uMsg)
@@ -624,13 +709,36 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				case VK_ESCAPE:
 					ExitProcess(0);
 					break;
+                FADER_KEYBOARD(0, 0x41, 0x59); // A+Y
+                FADER_KEYBOARD(1, 0x53, 0x58); // S+X
+                FADER_KEYBOARD(2, 0x44, 0x43); // D+C
+                FADER_KEYBOARD(3, 0x46, 0x56); // F+V
+                FADER_KEYBOARD(4, 0x47, 0x42); // G+B
+                FADER_KEYBOARD(5, 0x48, 0x4E); // H+N
+                FADER_KEYBOARD(6, 0x4A, 0x4D); // J+M
+                FADER_KEYBOARD(7, 0x4B, VK_OEM_COMMA); // K+,
+                FADER_KEYBOARD(8, 0x4C, VK_OEM_PERIOD); // L+.
+                case 0x31:
+                case 0x32:
+                case 0x33:
+                case 0x34:
+                case 0x35:
+                case 0x36:
+                case 0x37:
+                case 0x38:
+                case 0x39:
+                    select_button(wParam - 0x31);
+                    printf("Button pressed: %d\n", wParam - 0x31);
+                    break;
+                // TODO: Add alpha keys in keyboard order
 			}
+			index = override_index % nfiles;
 			break;
         case WM_SYSCOMMAND:
             switch(wParam)
             {
                 case SC_SCREENSAVE:
-                case SC_MONITORPOWER:   
+                case SC_MONITORPOWER:
                     return 0;           
                     break;
                     
@@ -930,7 +1038,51 @@ int WINAPI demo(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
     QueryPerformanceFrequency((LARGE_INTEGER*)&cps);
     t_start = (double)current_time/(double)cps;
+    
+    //FFTW3 Setup
+    in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * NFFT);
+    out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * NFFT);
+    p = fftw_plan_dft_1d(NFFT, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
 	
+    // Init sound capture
+    WAVEFORMATEX wfx;
+    wfx.wFormatTag = WAVE_FORMAT_PCM;
+    wfx.nChannels = 1;                    
+    wfx.nSamplesPerSec = 44100.;
+    wfx.wBitsPerSample = 16;
+    wfx.nBlockAlign = wfx.wBitsPerSample * wfx.nChannels / 8;
+    wfx.nAvgBytesPerSec = wfx.nBlockAlign * wfx.nSamplesPerSec;
+    
+    // Prepare mic
+    int result = waveInOpen(&wi,            
+                WAVE_MAPPER,    
+                &wfx,           
+                NULL,NULL,      
+                CALLBACK_NULL | WAVE_FORMAT_DIRECT  
+              );
+    printf("WaveInOpen: %d\n", result);
+    
+    int bsize = buffer_size*wfx.wBitsPerSample*wfx.nChannels/8;
+    char * buffers;
+    if(double_buffered == 1)
+        buffers = (char*)malloc(2*bsize);
+    else
+        buffers = (char*)malloc(bsize);
+    
+    for(int i = 0; i < double_buffered+1; ++i)
+    {
+        printf("Buffer i:\n");
+        headers[i].lpData =         buffers+i*bsize;             
+        headers[i].dwBufferLength = bsize;
+        result = waveInPrepareHeader(wi, &headers[i], sizeof(headers[i]));
+        printf("WaveInPrepareHeader: %d\n", result);
+        result = waveInAddBuffer(wi, &headers[i], sizeof(headers[i]));
+        printf("WaveInAddBuffer: %d\n", result);
+    }
+    
+    result = waveInStart(wi);
+    printf("WaveInStart: %d\n", result);
+    
     // Main loop
 	while(flip_buffers())
 	{
