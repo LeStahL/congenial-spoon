@@ -104,14 +104,17 @@ post_time_location = 0,
 index = 0,
 dirty = 0,
 shot = 0,
+paused = 0,
 buffer_size = 64,
 double_buffered = 0,
+scale_override = 0,
 cutoff = 96;
 char **shader_sources = 0;
 GLchar **compile_logs = 0,
 **link_logs = 0;
 double t_start = 0.,
 t_now = 0.,
+t_pause_start = 0.,
 fader_values[] = { 1.,0.,0.,0.,0.,0.,0.,0.,0.},
 scale = 0.,
 sscale = 0.,
@@ -737,7 +740,7 @@ void draw()
             }
             fftw_execute(p);
             
-//             if(!scale_override)
+            if(!scale_override)
             {
                 scale = 0.;
                 highscale = 0.;
@@ -847,12 +850,39 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch(uMsg)
 	{
+        case WM_KEYUP:
+            switch(wParam)
+			{
+                case VK_LCONTROL:
+                    scale = 0;
+                    scale_override = 0;
+                    break;
+            }
+            break;
+        
 		case WM_KEYDOWN:
 			switch(wParam)
 			{
 				case VK_ESCAPE:
 					ExitProcess(0);
 					break;
+                case VK_BACK:
+                    __int64 current_time, cps;
+                    QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
+                    QueryPerformanceFrequency((LARGE_INTEGER*)&cps);
+                    t_start = (double)current_time/(double)cps;
+                    break;
+                case VK_SPACE:
+                    if(paused)
+                        t_start += t_now-t_pause_start;
+                    else
+                        t_pause_start = t_now;
+                    paused = !paused;
+                    break;
+                case VK_LCONTROL:
+                    scale = 1.e3;
+                    scale_override = 1;
+                    break;
                 FADER_KEYBOARD(0, 0x41, 0x59); // A+Y
                 FADER_KEYBOARD(1, 0x53, 0x58); // S+X
                 FADER_KEYBOARD(2, 0x44, 0x43); // D+C
@@ -1472,8 +1502,7 @@ const char * post_source =
 	{
         QueryPerformanceCounter((LARGE_INTEGER*)&current_time);
         t_now = (double)current_time/(double)cps;
-        
-		draw();
+		if(!paused)draw();
 	}
 
 	return 0;
