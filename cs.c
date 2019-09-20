@@ -94,6 +94,8 @@ nfiles,
 *fader6_locations = 0,
 *fader7_locations = 0,
 *fader8_locations = 0,
+post_fader_locations[] = {0,0,0,0,0,0,0,0},
+post_time_location = 0,
 *scale_locations = 0,
 *shader_compiled = 0,
 *program_linked = 0,
@@ -116,7 +118,8 @@ highscale = 0.,
 nbeats = 0.,
 dial_1_value = 0.,
 dial_2_value = 0.,
-dial_3_value = 0.;
+dial_3_value = 0.,
+post_fader_values[] = {0.,0.,0.,0.,0.,0.,0.,0.};
 DWORD dwWaitStatus, watch_directory_thread_id; 
 HANDLE dwChangeHandles[2],
     watch_directory_thread; 
@@ -129,6 +132,8 @@ fftw_plan p;
 float values[NFFT], power_spectrum[NFFT];
 WAVEHDR headers[2];
 HWAVEIN wi;
+GLuint first_pass_framebuffer = 0, first_pass_texture;
+int post_handle, post_program, post_iResolution_location, post_iChannel0_location;
 
 PFNGLCREATESHADERPROC glCreateShader;
 PFNGLCREATEPROGRAMPROC glCreateProgram;
@@ -150,6 +155,8 @@ PFNGLGETPROGRAMINFOLOGPROC glGetProgramInfoLog;
 PFNGLDELETESHADERPROC glDeleteShader;
 PFNGLDELETEPROGRAMPROC glDeleteProgram;
 PFNGLDETACHSHADERPROC glDetachShader;
+PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D;
+PFNGLACTIVETEXTUREPROC glActiveTexture;
 
 float mix(float a, float b, float t)
 {
@@ -193,6 +200,46 @@ int debugp(int program, int i)
     }
     else
         return 1;
+}
+
+void _debug(int shader_handle)
+{
+	printf("    Debugging shader with handle %d.\n", shader_handle);
+	int compile_status = 0;
+	glGetShaderiv(shader_handle, GL_COMPILE_STATUS, &compile_status);
+	if(compile_status != GL_TRUE)
+	{
+		printf("    FAILED.\n");
+		GLint len;
+		glGetShaderiv(shader_handle, GL_INFO_LOG_LENGTH, &len);
+		printf("    Log length: %d\n", len);
+		GLchar *CompileLog = (GLchar*)malloc(len*sizeof(GLchar));
+		glGetShaderInfoLog(shader_handle, len, NULL, CompileLog);
+		printf("    Error messages:\n%s\n", CompileLog);
+		free(CompileLog);
+	}
+	else
+		printf("    Shader compilation successful.\n");
+}
+
+void _debugp(int program)
+{
+	printf("    Debugging program with handle %d.\n", program);
+	int compile_status = 0;
+	glGetProgramiv(program, GL_LINK_STATUS, &compile_status);
+	if(compile_status != GL_TRUE)
+	{
+		printf("    FAILED.\n");
+		GLint len;
+		glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+		printf("    Log length: %d\n", len);
+		GLchar *CompileLog = (GLchar*)malloc(len*sizeof(GLchar));
+		glGetProgramInfoLog(program, len, NULL, CompileLog);
+		printf("    Error messages:\n%s\n", CompileLog);
+		free(CompileLog);
+	}
+	else
+		printf("    Program linking successful.\n");
 }
 
 int screenshot(char *fileName)
@@ -587,6 +634,8 @@ void quad()
 
 void draw()
 {
+    glBindFramebuffer(GL_FRAMEBUFFER, first_pass_framebuffer);
+    
     double t = t_now-t_start;
     
     for(int i=0; i<double_buffered+1; ++i)
@@ -660,6 +709,18 @@ void draw()
     glUniform1f(fader7_locations[index], fader_values[7]);
     glUniform1f(fader8_locations[index], fader_values[8]);
     glUniform1f(scale_locations[index], scale);
+    
+    quad();
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glUseProgram(post_program);
+    glUniform2f(post_iResolution_location, w, h);
+    glUniform1i(post_iChannel0_location, 0);
+    glUniform1f(post_time_location, t);
+    for(int l=0; l<8; ++l)
+        glUniform1f(post_fader_locations[l], fader_values[l]);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, first_pass_texture);
     
     quad();
     
@@ -940,6 +1001,8 @@ int WINAPI demo(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     glDeleteShader = (PFNGLDELETESHADERPROC) wglGetProcAddress("glDeleteShader");
     glDetachShader = (PFNGLDETACHSHADERPROC) wglGetProcAddress("glDetachShader");
     glDeleteProgram = (PFNGLDELETEPROGRAMPROC) wglGetProcAddress("glDeleteProgram");
+    glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC) wglGetProcAddress("glFramebufferTexture2D");
+    glActiveTexture = (PFNGLACTIVETEXTUREPROC) wglGetProcAddress("glActiveTexture");
 
     ShowCursor(FALSE);
     
@@ -1004,6 +1067,243 @@ int WINAPI demo(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     select_button(0);
 
     printf("\n");
+    
+    // Create framebuffer for rendering first pass to
+	glGenFramebuffers(1, &first_pass_framebuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, first_pass_framebuffer);
+	glGenTextures(1, &first_pass_texture);
+	glBindTexture(GL_TEXTURE_2D, first_pass_texture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, first_pass_texture, 0);
+	glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    
+    // Load post processing shader
+    /* Generated with shader-compressor by NR4/Team210. */
+#ifndef POST_H
+#define POST_H
+const char * post_source =
+"#version 130\n"
+"\n"
+"const float iFSAA = 144.;\n"
+"uniform vec2 iResolution;\n"
+"uniform float iTime;\n"
+"uniform sampler2D iChannel0;\n"
+"uniform int iEffect;\n"
+"\n"
+"uniform float iFader0;\n"
+"uniform float iFader1;\n"
+"uniform float iFader2;\n"
+"uniform float iFader3;\n"
+"uniform float iFader4;\n"
+"uniform float iFader5;\n"
+"uniform float iFader6;\n"
+"uniform float iFader7;\n"
+"\n"
+"uniform float iDial0;\n"
+"uniform float iDial1;\n"
+"uniform float iDial2;\n"
+"uniform float iDial3;\n"
+"uniform float iDial4;\n"
+"uniform float iDial5;\n"
+"uniform float iDial6;\n"
+"uniform float iDial7;\n"
+"\n"
+"\n"
+"out vec4 gl_FragColor;\n"
+"\n"
+"const vec3 c = vec3(1.,0.,-1.);\n"
+"const float pi = acos(-1.);\n"
+"\n"
+"void rand(in vec2 x, out float n)\n"
+"{\n"
+"    x += 400.;\n"
+"    n = fract(sin(dot(sign(x)*abs(x) ,vec2(12.9898,78.233)))*43758.5453);\n"
+"}\n"
+"\n"
+"void lfnoise(in vec2 t, out float n)\n"
+"{\n"
+"    vec2 i = floor(t);\n"
+"    t = fract(t);\n"
+"    t = smoothstep(c.yy, c.xx, t);\n"
+"    vec2 v1, v2;\n"
+"    rand(i, v1.x);\n"
+"    rand(i+c.xy, v1.y);\n"
+"    rand(i+c.yx, v2.x);\n"
+"    rand(i+c.xx, v2.y);\n"
+"    v1 = c.zz+2.*mix(v1, v2, t.y);\n"
+"    n = mix(v1.x, v1.y, t.x);\n"
+"}\n"
+"\n"
+"void dvoronoi(in vec2 x, out float d, out vec2 z)\n"
+"{\n"
+"    vec2 y = floor(x);\n"
+"       float ret = 1.;\n"
+"    vec2 pf=c.yy, p;\n"
+"    float df=10.;\n"
+"    \n"
+"    for(int i=-1; i<=1; i+=1)\n"
+"        for(int j=-1; j<=1; j+=1)\n"
+"        {\n"
+"            p = y + vec2(float(i), float(j));\n"
+"            float pa;\n"
+"            rand(p, pa);\n"
+"            p += pa;\n"
+"            \n"
+"            d = length(x-p);\n"
+"            \n"
+"            if(d < df)\n"
+"            {\n"
+"                df = d;\n"
+"                pf = p;\n"
+"            }\n"
+"        }\n"
+"    for(int i=-1; i<=1; i+=1)\n"
+"        for(int j=-1; j<=1; j+=1)\n"
+"        {\n"
+"            p = y + vec2(float(i), float(j));\n"
+"            float pa;\n"
+"            rand(p, pa);\n"
+"            p += pa;\n"
+"            \n"
+"            vec2 o = p - pf;\n"
+"            d = length(.5*o-dot(x-pf, o)/dot(o,o)*o);\n"
+"            ret = min(ret, d);\n"
+"        }\n"
+"    \n"
+"    d = ret;\n"
+"    z = pf;\n"
+"}\n"
+"\n"
+"void rot3(in vec3 p, out mat3 rot)\n"
+"{\n"
+"    rot = mat3(c.xyyy, cos(p.x), sin(p.x), 0., -sin(p.x), cos(p.x))\n"
+"        *mat3(cos(p.y), 0., -sin(p.y), c.yxy, sin(p.y), 0., cos(p.y))\n"
+"        *mat3(cos(p.z), -sin(p.z), 0., sin(p.z), cos(p.z), c.yyyx);\n"
+"}\n"
+"\n"
+"void mainImage( out vec4 fragColor, in vec2 fragCoord )\n"
+"{\n"
+"    vec4 col = vec4(0.);\n"
+"    float bound = sqrt(iFSAA)-1.;\n"
+"    \n"
+"    float delta = 0.;\n"
+"    vec2 n;\n"
+"    \n"
+"    // Chromatic distortion\n"
+"    if(iFader0 > 0.) \n"
+"    {\n"
+"        delta = mix(.0,.02,iFader0);\n"
+"        rand(floor(20.*fragCoord.y/iResolution.y*c.xx-1337.*floor(12.*iTime)),n.x);\n"
+"        rand(floor(20.*fragCoord.y/iResolution.y*c.xx-1337.*floor(12.*iTime)+2337.),n.y);\n"
+"    }\n"
+"    \n"
+"    // HF noise\n"
+"    if(iFader1 > 0.)\n"
+"    {\n"
+"        lfnoise(12.*fragCoord-iTime, n.x);\n"
+"        lfnoise(12.*fragCoord-iTime-1337., n.y);\n"
+"        fragCoord += mix(1.,20.,iFader1)*n;\n"
+"    }\n"
+"    \n"
+"    // LF noise\n"
+"    if(iFader2 > 0.)\n"
+"    {\n"
+"        lfnoise(22.*fragCoord/iResolution-3.*iTime, n.x);\n"
+"        lfnoise(22.*fragCoord/iResolution-3.*iTime-1337., n.y);\n"
+"        fragCoord += mix(0.,22.,iFader2)*n;\n"
+"    }\n"
+"    \n"
+"    // Kaleidoscope\n"
+"    if(iFader3 > 0.)\n"
+"    {\n"
+"        float a = iResolution.x/iResolution.y;\n"
+"        vec2 uv = fragCoord/iResolution.yy-0.5*vec2(a, 1.0);\n"
+"//         rand(floor(.33*iTime)*c.xx, n.x);\n"
+"//         n.x = max(floor(12.*n.x),3.);\n"
+"        n.x = floor(mix(3.,10.,iFader3));\n"
+"        float phi = abs(mod(atan(uv.y, uv.x),pi/n.x)-.5*pi/n.x);\n"
+"        uv = length(uv)*vec2(cos(phi), sin(phi));\n"
+"        fragCoord = (uv + .5*vec2(a,1.))*iResolution.yy;\n"
+"    }\n"
+"    \n"
+"    // Voronoi tiles\n"
+"    if(iFader4 > 0.)\n"
+"    {\n"
+"        float a = iResolution.x/iResolution.y;\n"
+"        vec2 uv = fragCoord/iResolution.yy-0.5*vec2(a, 1.0);\n"
+"        \n"
+"        float dv;\n"
+"        vec2 ind;\n"
+"        dvoronoi(mix(1.,100.,1.-iFader4)*uv, dv, ind);\n"
+"        uv = ind/mix(1.,100.,1.-iFader4);\n"
+"        \n"
+"        fragCoord = (uv + .5*vec2(a,1.))*iResolution.yy;\n"
+"    }\n"
+"    \n"
+"   	for(float i = -.5*bound; i<=.5*bound; i+=1.)\n"
+"        for(float j=-.5*bound; j<=.5*bound; j+=1.)\n"
+"        {\n"
+"            vec3 cl = texture(iChannel0, fragCoord/iResolution.xy+delta*n+vec2(i,j)*3.0/max(bound,1.)/iResolution.xy).rgb,\n"
+"                cr = texture(iChannel0, fragCoord/iResolution.xy-delta*n+vec2(i,j)*3.0/max(bound,1.)/iResolution.xy).rgb,\n"
+"                cc = texture(iChannel0, fragCoord/iResolution.xy+vec2(i,j)*3.0/max(bound,1.)/iResolution.xy).rgb;\n"
+"            col += vec4(cl.r, cc.g, cr.b,1.);\n"
+"        }\n"
+"    col /= iFSAA;\n"
+"    \n"
+"    // Color\n"
+"    if(iFader5 > 0.)\n"
+"    {\n"
+"        mat3 RR;\n"
+"        vec3 ra;\n"
+"        rand(iFader5*c.xx+3337., ra.x);\n"
+"        rand(iFader5*c.xx+1337., ra.y);\n"
+"        rand(iFader5*c.xx+2337., ra.z);\n"
+"        rot3((iFader5-48.)*810.*ra+col.rgb,RR);\n"
+"        col.rgb = mix(col.rgb, abs(RR*col.rgb),col.rgb);\n"
+"    }\n"
+"    \n"
+"    // Grayscale\n"
+"    if(iFader6 > 0.)\n"
+"    {\n"
+"        col.rgb = mix(col.rgb, length(col.rgb)/sqrt(3.)*c.xxx, iFader6);\n"
+"    }\n"
+"    \n"
+"    fragColor = col;\n"
+"}\n"
+"\n"
+"void main()\n"
+"{\n"
+"    mainImage(gl_FragColor, gl_FragCoord.xy);\n"
+"}\n"
+"\n"
+;
+#endif
+
+    int post_size = strlen(post_source);
+    post_handle = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(post_handle, 1, (GLchar **)&post_source, &post_size);
+    glCompileShader(post_handle);
+    _debug(post_handle);
+    post_program = glCreateProgram();
+    glAttachShader(post_program,post_handle);
+    glLinkProgram(post_program);
+    _debugp(post_program);
+    glUseProgram(post_program);
+    post_iResolution_location = glGetUniformLocation(post_program, "iResolution");
+    post_iChannel0_location = glGetUniformLocation(post_program, "iChannel0");
+    post_fader_locations[0] = glGetUniformLocation(post_program, "iFader0");
+    post_fader_locations[1] = glGetUniformLocation(post_program, "iFader1");
+    post_fader_locations[2] = glGetUniformLocation(post_program, "iFader2");
+    post_fader_locations[3] = glGetUniformLocation(post_program, "iFader3");
+    post_fader_locations[4] = glGetUniformLocation(post_program, "iFader4");
+    post_fader_locations[5] = glGetUniformLocation(post_program, "iFader5");
+    post_fader_locations[6] = glGetUniformLocation(post_program, "iFader6");
+    post_fader_locations[7] = glGetUniformLocation(post_program, "iFader7");
+    post_time_location = glGetUniformLocation(post_program, "iTime");
     
     // Load JSON config file with projection area definitions
     FILE *f = fopen("congenial-spoon.json", "rt");
